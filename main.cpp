@@ -1,14 +1,3 @@
 #include <iostream>
-
+#include <circuit_phase1.h>
 using namespace std;
-
-int main (){
-    cout << "hellow saman ...";
-    cout << sam (2);
-
-}
-int sam (int s){
-    s=  s+2;
-
-
-}
