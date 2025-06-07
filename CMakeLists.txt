@@ -11,4 +11,7 @@ add_executable(OOP_SPICE
         circuit_input.cpp
         mna_builder.cpp
         linear_solver.cpp
-        linear_solver.h)
+        linear_solver.h
+        time_domain_simulator.cpp
+        time_domain_simulator.h
+)

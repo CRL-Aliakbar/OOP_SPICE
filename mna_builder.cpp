@@ -13,8 +13,12 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
 
     // ساخت map برای شماره‌گذاری گره‌ها
     int idx = 0;
-    for (const auto& node : circuit.getNodes())
+    for (const auto& node : circuit.getNodes()) {
+        if (node.id == 0) continue;  // حذف نود زمین و مرحع کردن
+
         nodeIndexMap[node.id] = idx++;
+    }
+    n = nodeIndexMap.size();  // تعداد واقعی گره‌های غیرزمین
 
     // initialize matrices
     G.assign(n, std::vector<double>(n, 0));

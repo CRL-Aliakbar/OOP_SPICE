@@ -3,6 +3,9 @@
 #include <mna_builder.h>
 #include <unordered_set>
 
+#include "linear_solver.h"
+#include "time_domain_simulator.h"
+
 bool nodeExists(const std::vector<Node>& nodes, int id) {
     for (const auto& node : nodes) {
         if (node.id == id)
@@ -81,6 +84,12 @@ int main() {
     std::cout << "\nSolution (V and I):\n";
     for (size_t i = 0; i < solution.size(); ++i)
         std::cout << "x[" << i << "] = " << solution[i] << "\n";
+
+    // حالا شروع فاز ۵:
+    std::cout << "\n--- Starting Time-Domain Simulation ---\n";
+
+    TimeDomainSimulator simulator(circuit, 1e-5 /* dt */, 1e-3 /* totalTime */);
+    simulator.runSimulation();
 
 
     return 0;
