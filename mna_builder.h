@@ -11,6 +11,8 @@ private:
     const Circuit& circuit;
     int n; // تعداد گره‌ها
     int m; // تعداد منابع ولتاژ
+    int numInductors;
+    int numVoltageSources;
 
     std::map<int, int> nodeIndexMap; // map from node ID to index in matrix
     std::vector<std::vector<double>> G;
@@ -31,6 +33,19 @@ public:
     //فاز چهارم بخش بندی خودم دو خط زیر اضافه شدند
     std::vector<std::vector<double>> getSystemMatrix() const;
     std::vector<double> getRHSVector() const;
+
+// برای اپدیت لحظه ای خازن خطوط زیر اضافه شدند
+    const std::map<int, int>& getNodeIndexMap() const { return nodeIndexMap; }
+    std::vector<std::vector<double>>& accessG() { return G; }
+    std::vector<double>& accessJ() { return J; }
+    std::vector<double>& accessE() { return E; }
+
+
+    // برای اپدیت لحظه ای سلف خطوط زیر اضافه شدند
+    int getNumVoltageSources() const { return numVoltageSources; }
+    int getNumInductors() const { return numInductors; }
+
+    std::vector<std::vector<double>>& accessD() { return D; }
 
 };
 

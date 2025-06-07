@@ -58,10 +58,18 @@ int main() {
     Circuit circuit;
 
     std::vector<std::string> input_lines = {
-        "R1 1 2 1000",
-        "V1 1 0 5",
-        "I1 2 0 0.001"
+        // "R1 1 2 1000",
+        // "V1 1 0 5",
+        // "I1 2 0 0.001"
         //ورودی های بالا آزمایشی هستند برای ورودی گرفتن باید چاره دیگری بیندیشیم
+
+
+
+//ورودی برای حالت دارای خازن
+        "R1 1 2 1000",
+        "C1 2 0 1e-6",
+        "L1 2 0 1e-3",
+        "V1 1 0 5"
     };
 
     for (const auto& line : input_lines)
@@ -88,7 +96,7 @@ int main() {
     // حالا شروع فاز ۵:
     std::cout << "\n--- Starting Time-Domain Simulation ---\n";
 
-    TimeDomainSimulator simulator(circuit, 1e-5 /* dt */, 1e-3 /* totalTime */);
+    TimeDomainSimulator simulator(circuit, 1e-6 /* dt */, 2e-3 /* totalTime */);
     simulator.runSimulation();
 
 

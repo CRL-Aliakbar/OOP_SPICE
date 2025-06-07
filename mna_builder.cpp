@@ -6,11 +6,20 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
     // تعیین تعداد گره‌ها و ولتاژسورس‌ها
     n = circuit.getNodes().size();
 
-    m = 0;
-    for (const auto& elem : circuit.getElements())
-        if (elem->getType() == "VoltageSource")
-            m++;
 
+    // تعداد voltage sources و inductors را بشمار
+    numVoltageSources = 0;
+    numInductors = 0;  // مقدار اولیه
+
+
+    for (const auto& elem : circuit.getElements()) {
+        if (elem->getType() == "VoltageSource") {
+            numVoltageSources++;
+        }
+        if (elem->getType() == "Inductor") {
+            ++numInductors;
+        }
+    }
     // ساخت map برای شماره‌گذاری گره‌ها
     int idx = 0;
     for (const auto& node : circuit.getNodes()) {

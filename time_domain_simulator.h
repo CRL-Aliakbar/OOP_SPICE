@@ -8,7 +8,8 @@
 class TimeDomainSimulator {
 public:
     TimeDomainSimulator(Circuit& circuit, double timeStep, double totalTime);
-
+    std::map<std::string, double> previousCapacitorVoltages;// برای خازنه
+    std::map<std::string, double> previousInductorCurrents;// برای سلفه
     void runSimulation();
 
 private:
@@ -21,5 +22,6 @@ private:
 
     void updateMNAforTimeStep(MNAMatrixBuilder& mna);
 };
+
 
 #endif
