@@ -23,6 +23,9 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
     D.assign(m, std::vector<double>(m, 0));
     J.assign(n, 0);
     E.assign(m, 0);
+
+
+
 }
 
 void MNAMatrixBuilder::build() {
@@ -75,4 +78,40 @@ void MNAMatrixBuilder::print() const {
     std::cout << "\nVector E:\n";
     for (double val : E)
         std::cout << val << "\n";
+}
+
+std::vector<std::vector<double>> MNAMatrixBuilder::getSystemMatrix() const {
+    int nTotal = G.size() + D.size();
+    std::vector<std::vector<double>> A(nTotal, std::vector<double>(nTotal, 0));
+
+    // G
+    for (int i = 0; i < G.size(); ++i)
+        for (int j = 0; j < G.size(); ++j)
+            A[i][j] = G[i][j];
+
+    // B
+    for (int i = 0; i < G.size(); ++i)
+        for (int j = 0; j < B[0].size(); ++j)
+            A[i][G.size() + j] = B[i][j];
+
+    // C
+    for (int i = 0; i < C.size(); ++i)
+        for (int j = 0; j < C[0].size(); ++j)
+            A[G.size() + i][j] = C[i][j];
+
+    // D
+    for (int i = 0; i < D.size(); ++i)
+        for (int j = 0; j < D.size(); ++j)
+            A[G.size() + i][G.size() + j] = D[i][j];
+
+    return A;
+}
+
+std::vector<double> MNAMatrixBuilder::getRHSVector() const {
+    std::vector<double> b;
+    for (double val : J)
+        b.push_back(val);
+    for (double val : E)
+        b.push_back(val);
+    return b;
 }

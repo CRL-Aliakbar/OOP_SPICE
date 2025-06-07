@@ -26,6 +26,12 @@ public:
     void build();
 
     void print() const;
+
+
+    //فاز چهارم بخش بندی خودم دو خط زیر اضافه شدند
+    std::vector<std::vector<double>> getSystemMatrix() const;
+    std::vector<double> getRHSVector() const;
+
 };
 
 #endif

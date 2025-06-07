@@ -70,6 +70,13 @@ build CMakeFiles/OOP_SPICE.dir/mna_builder.cpp.obj: CXX_COMPILER__OOP_SPICE_unsc
   OBJECT_DIR = CMakeFiles\OOP_SPICE.dir
   OBJECT_FILE_DIR = CMakeFiles\OOP_SPICE.dir
 
+build CMakeFiles/OOP_SPICE.dir/linear_solver.cpp.obj: CXX_COMPILER__OOP_SPICE_unscanned_Debug C$:/Users/Aliakbar/Documents/GitHub/OOP_SPICE/linear_solver.cpp || cmake_object_order_depends_target_OOP_SPICE
+  DEP_FILE = CMakeFiles\OOP_SPICE.dir\linear_solver.cpp.obj.d
+  FLAGS = -g -std=gnu++14 -fdiagnostics-color=always
+  INCLUDES = -IC:/Users/Aliakbar/Documents/GitHub/OOP_SPICE/.
+  OBJECT_DIR = CMakeFiles\OOP_SPICE.dir
+  OBJECT_FILE_DIR = CMakeFiles\OOP_SPICE.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target OOP_SPICE
@@ -78,7 +85,7 @@ build CMakeFiles/OOP_SPICE.dir/mna_builder.cpp.obj: CXX_COMPILER__OOP_SPICE_unsc
 #############################################
 # Link the executable OOP_SPICE.exe
 
-build OOP_SPICE.exe: CXX_EXECUTABLE_LINKER__OOP_SPICE_Debug CMakeFiles/OOP_SPICE.dir/main.cpp.obj CMakeFiles/OOP_SPICE.dir/circuit_input.cpp.obj CMakeFiles/OOP_SPICE.dir/mna_builder.cpp.obj
+build OOP_SPICE.exe: CXX_EXECUTABLE_LINKER__OOP_SPICE_Debug CMakeFiles/OOP_SPICE.dir/main.cpp.obj CMakeFiles/OOP_SPICE.dir/circuit_input.cpp.obj CMakeFiles/OOP_SPICE.dir/mna_builder.cpp.obj CMakeFiles/OOP_SPICE.dir/linear_solver.cpp.obj
   FLAGS = -g
   LINK_LIBRARIES = -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32
   OBJECT_DIR = CMakeFiles\OOP_SPICE.dir

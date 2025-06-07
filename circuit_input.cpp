@@ -69,5 +69,19 @@ int main() {
     MNAMatrixBuilder mna(circuit);
     mna.build();
     mna.print();  // این خط خیلی مهم است!
+
+
+    // حل دستگاه Ax = b
+    auto A = mna.getSystemMatrix();
+    auto b_vec = mna.getRHSVector();
+
+    auto solution = LinearSolver::solve(A, b_vec);
+
+    // چاپ جواب
+    std::cout << "\nSolution (V and I):\n";
+    for (size_t i = 0; i < solution.size(); ++i)
+        std::cout << "x[" << i << "] = " << solution[i] << "\n";
+
+
     return 0;
 }

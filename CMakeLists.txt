@@ -9,4 +9,6 @@ add_executable(OOP_SPICE
         circuit_phase1.h
     main.cpp
         circuit_input.cpp
-        mna_builder.cpp)
+        mna_builder.cpp
+        linear_solver.cpp
+        linear_solver.h)
