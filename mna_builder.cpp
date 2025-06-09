@@ -7,19 +7,21 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
     n = circuit.getNodes().size();
 
 
+
+
     // تعداد voltage sources و inductors را بشمار
     numVoltageSources = 0;
     numInductors = 0;  // مقدار اولیه
 
-
     for (const auto& elem : circuit.getElements()) {
-        if (elem->getType() == "VoltageSource") {
-            numVoltageSources++;
-        }
-        if (elem->getType() == "Inductor") {
+        if (elem->getType() == "VoltageSource")
+            ++numVoltageSources;
+        if (elem->getType() == "Inductor")
             ++numInductors;
-        }
     }
+// مربوط به مشکل صفر های پیاپی که درون ماترس میداد
+    m = numVoltageSources + numInductors;
+
     // ساخت map برای شماره‌گذاری گره‌ها
     int idx = 0;
     for (const auto& node : circuit.getNodes()) {
@@ -44,6 +46,11 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
 void MNAMatrixBuilder::build() {
     int voltageSourceIdx = 0;
 
+
+    int vsCounter = 0;          // شماره VoltageSource در ماتریس B, C
+    int inductorCounterLocal = 0;  // شماره Inductor در ماتریس B, C
+
+
     for (const auto& elem : circuit.getElements()) {
         int i = nodeIndexMap[elem->getNode1()];
         int j = nodeIndexMap[elem->getNode2()];
@@ -59,15 +66,63 @@ void MNAMatrixBuilder::build() {
             J[i] -= value;
             J[j] += value;
         } else if (elem->getType() == "VoltageSource") {
-            B[i][voltageSourceIdx] = 1;
-            B[j][voltageSourceIdx] = -1;
-            C[voltageSourceIdx][i] = 1;
-            C[voltageSourceIdx][j] = -1;
-            E[voltageSourceIdx] = value;
-            voltageSourceIdx++;
+            int vsIndex = vsCounter;
+
+            int i = elem->getNode1();
+            int j = elem->getNode2();
+
+            int row_i = (i == 0) ? -1 : nodeIndexMap[i];
+            int row_j = (j == 0) ? -1 : nodeIndexMap[j];
+
+            if (row_i != -1) {
+                B[row_i][vsIndex] = -1;
+                C[vsIndex][row_i] = -1;
+            }
+            if (row_j != -1) {
+                B[row_j][vsIndex] = 1;
+                C[vsIndex][row_j] = 1;
+            }
+
+
+            // این خط حیاتی است:
+            E[vsIndex] = elem->getValue();
+
+
+            ++vsCounter;
+        }
+        // (elem->getType() == "VoltageSource") {
+        //     B[i][voltageSourceIdx] = 1;
+        //     B[j][voltageSourceIdx] = -1;
+        //     C[voltageSourceIdx][i] = 1;
+        //     C[voltageSourceIdx][j] = -1;
+        //     E[voltageSourceIdx] = value;
+        //     voltageSourceIdx++;
+
+        else if (elem->getType() == "Inductor") {
+            int indIndex = numVoltageSources + inductorCounterLocal;
+
+            int i = elem->getNode1();
+            int j = elem->getNode2();
+
+            int row_i = (i == 0) ? -1 : nodeIndexMap[i];
+            int row_j = (j == 0) ? -1 : nodeIndexMap[j];
+
+            if (row_i != -1) {
+                B[row_i][indIndex] = -1;
+                C[indIndex][row_i] = -1;
+            }
+            if (row_j != -1) {
+                B[row_j][indIndex] = 1;
+                C[indIndex][row_j] = 1;
+            }
+
+            ++inductorCounterLocal;
+        }
+
+
         }
     }
-}
+
 
 void MNAMatrixBuilder::print() const {
     auto printMatrix = [](const auto& mat, const std::string& name) {

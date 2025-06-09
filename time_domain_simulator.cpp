@@ -28,6 +28,9 @@ void TimeDomainSimulator::runSimulation() {
 
         auto nodeIndexMap = mna.getNodeIndexMap();
         // به روز رسانی previousVoltages و previousCurrents
+
+        int inductorCounter_runSim = 0;
+
         for (const auto& elem : circuit.getElements()) {
             if (elem->getType() == "Capacitor") {
                 int i = elem->getNode1();
@@ -42,13 +45,7 @@ void TimeDomainSimulator::runSimulation() {
                 double RL = L / dt;
                 double V_hist = -RL * previousInductorCurrents[elem->getName()];
 
-                // پیدا کردن index جریان این سلف در MNA:
-                // فرض: سلف‌ها به ترتیب در B,C,D اضافه می‌شوند → و index آن‌ها n + k (k = شماره سلف)
-                // پس از MNAMatrixBuilder باید numVoltageSources و numInductors بگیری.
-                // فعلاً ساده می‌گوییم index سلف = n + inductorCounter
-
-                static int inductorCounter = 0; // static → برای شمارش سلف‌ها فقط یکبار
-                int inductorIndex = mna.getNumVoltageSources() + inductorCounter;
+                int inductorIndex = mna.getNumVoltageSources() +  inductorCounter_runSim;
 
                 // D[inductorIndex][inductorIndex] += RL
                 mna.accessD()[inductorIndex][inductorIndex] += RL;
@@ -57,7 +54,7 @@ void TimeDomainSimulator::runSimulation() {
 
                 previousInductorCurrents[elem->getName()] = solution[inductorIndex];
 
-                ++inductorCounter;
+              ++inductorCounter_runSim;
             }
         }
 
@@ -80,6 +77,10 @@ void TimeDomainSimulator::updateMNAforTimeStep(MNAMatrixBuilder& mna) {
     auto& G = mna.accessG();  // باید accessG() اضافه کنیم.
     auto& J = mna.accessJ();  // باید accessJ() اضافه کنیم.
     auto& E = mna.accessE();  // برای سلف‌ها.
+    auto& D = mna.accessD(); // برای سلف اضافه شد
+
+
+    int inductorCounter = 0; // برای شمارش سلف و مشکل بی نهایت شدن لوپ ماتریسی
 
     for (const auto& elem : elements) {
         int i = elem->getNode1();
@@ -106,6 +107,18 @@ void TimeDomainSimulator::updateMNAforTimeStep(MNAMatrixBuilder& mna) {
             if (row_j != -1) J[row_j] += I_hist;
         }
 
-        // سلف → مشابه ولی در B,C,D,E → بعداً کاملش می‌نویسم.
+        else if (elem->getType() == "Inductor") {
+            double L = elem->getValue();
+            double RL = L / dt;
+            double V_hist = -RL * previousInductorCurrents[elem->getName()];
+
+            int inductorIndex = mna.getNumVoltageSources() + inductorCounter;
+
+            mna.accessD()[inductorIndex][inductorIndex] = RL;
+            mna.accessE()[inductorIndex] -= V_hist;
+
+
+            ++inductorCounter;
+        }
     }
 }
