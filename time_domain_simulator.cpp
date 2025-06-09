@@ -8,6 +8,12 @@ void TimeDomainSimulator::runSimulation() {
     steps = static_cast<int>(totalTime / dt);
 
     previousVoltages.resize(circuit.getNodes().size(), 0.0);
+    // مقداردهی اولیه جریان سلف‌ها به صفر
+    for (const auto& elem : circuit.getElements()) {
+        if (elem->getType() == "Inductor") {
+            previousInductorCurrents[elem->getName()] = 0.0;
+        }
+    }
 
     for (int step = 0; step <= steps; ++step) {
         double currentTime = step * dt;
@@ -41,29 +47,28 @@ void TimeDomainSimulator::runSimulation() {
 
                 previousCapacitorVoltages[elem->getName()] = Vi - Vj;
             } else if (elem->getType() == "Inductor") {
+                //کد زیر کلا جایگزین کد قبلی برای سلف شده است
                 double L = elem->getValue();
-                double RL = L / dt;
-                double V_hist = -RL * previousInductorCurrents[elem->getName()];
+                int i = elem->getNode1();
+                int j = elem->getNode2();
 
-                int inductorIndex = mna.getNumVoltageSources() +  inductorCounter_runSim;
+                double Vi = (i == 0) ? 0.0 : solution[nodeIndexMap.at(i)];
+                double Vj = (j == 0) ? 0.0 : solution[nodeIndexMap.at(j)];
+                double V_L = Vi - Vj;
 
-                // D[inductorIndex][inductorIndex] += RL
-                mna.accessD()[inductorIndex][inductorIndex] += RL;
-                // E[inductorIndex] -= V_hist;
-                mna.accessE()[inductorIndex] -= V_hist;
-
-                previousInductorCurrents[elem->getName()] = solution[inductorIndex];
-
-              ++inductorCounter_runSim;
+                // update current using: I[n+1] = I[n] + (dt / L) * V_L
+                double I_L = previousInductorCurrents[elem->getName()] + (dt / L) * V_L;
+                previousInductorCurrents[elem->getName()] = I_L;
             }
         }
 
-        // چاپ نتیجه این گام زمانی:
-        std::cout << "Time = " << currentTime << " s\n";
-        for (size_t i = 0; i < solution.size(); ++i)
-            std::cout << "x[" << i << "] = " << solution[i] << "\n";
-        std::cout << "---------------------\n";
-
+      if(step % 100 == 0) {
+          // چاپ نتیجه این گام زمانی:
+          std::cout << "Time = " << currentTime << " s\n";
+          for (size_t i = 0; i < solution.size(); ++i)
+              std::cout << "x[" << i << "] = " << solution[i] << "\n";
+          std::cout << "---------------------\n";
+      }
 
 
     }
@@ -115,7 +120,7 @@ void TimeDomainSimulator::updateMNAforTimeStep(MNAMatrixBuilder& mna) {
             int inductorIndex = mna.getNumVoltageSources() + inductorCounter;
 
             mna.accessD()[inductorIndex][inductorIndex] = RL;
-            mna.accessE()[inductorIndex] -= V_hist;
+            mna.accessE()[inductorIndex] = -V_hist;
 
 
             ++inductorCounter;

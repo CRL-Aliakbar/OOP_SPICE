@@ -96,7 +96,7 @@ int main() {
     // حالا شروع فاز ۵:
     std::cout << "\n--- Starting Time-Domain Simulation ---\n";
 
-    TimeDomainSimulator simulator(circuit, 1e-6 /* dt */, 2e-3 /* totalTime */);
+    TimeDomainSimulator simulator(circuit, 1e-7 /* dt */,  2e-4  /* totalTime */);
     simulator.runSimulation();
 
 
