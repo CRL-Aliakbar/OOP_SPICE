@@ -20,7 +20,10 @@ void parseAndAddElement(Circuit& circuit, const std::string& line) {
     int node1, node2;
     double value;
 
-    iss >> name >> node1 >> node2 >> value;
+    if (!(iss >> name >> node1 >> node2 >> value)) {
+        std::cerr << "Error ! true format : name  node1  node2  value!\n";
+        return;
+    }
 
     if (!nodeExists(circuit.getNodes(), node1))
         circuit.addNode(node1);
@@ -47,58 +50,51 @@ void parseAndAddElement(Circuit& circuit, const std::string& line) {
             elem = std::make_shared<CurrentSource>(name, node1, node2, value);
         break;
         default:
-            std::cerr << "Unknown element type: " << name << std::endl;
+            std::cerr << "unknown element : " << name << "\n";
         return;
     }
 
     circuit.addElement(elem);
 }
 
+
 int main() {
     Circuit circuit;
-
-    std::vector<std::string> input_lines = {
-        // "R1 1 2 1000",
-        // "V1 1 0 5",
-        // "I1 2 0 0.001"
-        //ورودی های بالا آزمایشی هستند برای ورودی گرفتن باید چاره دیگری بیندیشیم
+    std::string line;
 
 
+    while (true) {
+        std::getline(std::cin, line);
 
-//ورودی برای حالت دارای خازن
-        "R1 1 2 1000",
-        "C1 2 0 1e-6",
-        "L1 2 0 1e-3",
-        "V1 1 0 5"
-    };
+        if (line == "0")
+            break;
 
-    for (const auto& line : input_lines)
-        parseAndAddElement(circuit, line);
+        try {
+            parseAndAddElement(circuit, line);
+        } catch (const std::exception& e) {
+            std::cerr << "error :" << e.what() << std::endl;
+        }
+    }
 
     circuit.print();
 
     MNAMatrixBuilder mna(circuit);
     mna.build();
-    mna.print();  // این خط خیلی مهم است!
+    mna.print();
 
-
-    // حل دستگاه Ax = b
     auto A = mna.getSystemMatrix();
     auto b_vec = mna.getRHSVector();
 
     auto solution = LinearSolver::solve(A, b_vec);
 
-    // چاپ جواب
     std::cout << "\nSolution (V and I):\n";
     for (size_t i = 0; i < solution.size(); ++i)
         std::cout << "x[" << i << "] = " << solution[i] << "\n";
 
-    // حالا شروع فاز ۵:
     std::cout << "\n--- Starting Time-Domain Simulation ---\n";
 
     TimeDomainSimulator simulator(circuit, 1e-7 /* dt */,  2e-4  /* totalTime */);
     simulator.runSimulation();
-
 
     return 0;
 }

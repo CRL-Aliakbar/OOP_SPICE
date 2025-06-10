@@ -17,6 +17,10 @@ private:
     int numInductors;
     int numVoltageSources;
 
+    std::vector<std::string> voltageSourceNames;
+    std::vector<std::string> inductorNames;
+
+
     std::map<int, int> nodeIndexMap; // map from node ID to index in matrix
     std::vector<std::vector<double>> G;
     std::vector<std::vector<double>> B;

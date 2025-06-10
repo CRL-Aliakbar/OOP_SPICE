@@ -47,6 +47,10 @@ void MNAMatrixBuilder::build() {
     int voltageSourceIdx = 0;
 
 
+    voltageSourceNames.clear();
+    inductorNames.clear();
+
+
     int vsCounter = 0;          // شماره VoltageSource در ماتریس B, C
     int inductorCounterLocal = 0;  // شماره Inductor در ماتریس B, C
 
