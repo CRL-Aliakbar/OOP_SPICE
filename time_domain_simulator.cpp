@@ -35,7 +35,7 @@ void TimeDomainSimulator::runSimulation() {
         auto nodeIndexMap = mna.getNodeIndexMap();
         // به روز رسانی previousVoltages و previousCurrents
 
-        int inductorCounter_runSim = 0;
+        //int inductorCounter_runSim = 0;
 
         for (const auto& elem : circuit.getElements()) {
             if (elem->getType() == "Capacitor") {
@@ -65,9 +65,21 @@ void TimeDomainSimulator::runSimulation() {
       if(step % 100 == 0) {
           // چاپ نتیجه این گام زمانی:
           std::cout << "Time = " << currentTime << " s\n";
-          for (size_t i = 0; i < solution.size(); ++i)
-              std::cout << "x[" << i << "] = " << solution[i] << "\n";
-          std::cout << "---------------------\n";
+          auto voltageSourceNames = mna.getVoltageSourceNames();
+          auto inductorNames = mna.getInductorNames();
+
+          for (size_t i = 0; i < mna.getNodeIndexMap().size(); ++i) {
+              std::cout << "V(Node " << i+1 << ") = " << solution[i] << " V\n";
+          }
+
+          for (size_t i = 0; i < voltageSourceNames.size(); ++i) {
+              std::cout << "I(" << voltageSourceNames[i] << ") = " << solution[mna.getNodeIndexMap().size() + i] << " A\n";
+          }
+
+          for (size_t i = 0; i < inductorNames.size(); ++i) {
+              std::cout << "I(" << inductorNames[i] << ") = " << previousInductorCurrents[inductorNames[i]] << " A\n";
+          }
+
       }
 
 

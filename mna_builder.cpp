@@ -44,7 +44,7 @@ MNAMatrixBuilder::MNAMatrixBuilder(const Circuit& _circuit) : circuit(_circuit) 
 }
 
 void MNAMatrixBuilder::build() {
-    int voltageSourceIdx = 0;
+    //int voltageSourceIdx = 0;
 
 
     voltageSourceNames.clear();
@@ -91,16 +91,9 @@ void MNAMatrixBuilder::build() {
             // این خط حیاتی است:
             E[vsIndex] = elem->getValue();
 
-
+            voltageSourceNames.push_back(elem->getName());
             ++vsCounter;
         }
-        // (elem->getType() == "VoltageSource") {
-        //     B[i][voltageSourceIdx] = 1;
-        //     B[j][voltageSourceIdx] = -1;
-        //     C[voltageSourceIdx][i] = 1;
-        //     C[voltageSourceIdx][j] = -1;
-        //     E[voltageSourceIdx] = value;
-        //     voltageSourceIdx++;
 
         else if (elem->getType() == "Inductor") {
             int indIndex = numVoltageSources + inductorCounterLocal;
@@ -119,7 +112,7 @@ void MNAMatrixBuilder::build() {
                 B[row_j][indIndex] = 1;
                 C[indIndex][row_j] = 1;
             }
-
+            inductorNames.push_back(elem->getName());
             ++inductorCounterLocal;
         }
 

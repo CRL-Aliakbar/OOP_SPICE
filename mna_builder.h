@@ -54,6 +54,10 @@ public:
 
     std::vector<std::vector<double>>& accessD() { return D; }
 
+
+    const std::vector<std::string>& getVoltageSourceNames() const { return voltageSourceNames; }
+    const std::vector<std::string>& getInductorNames() const { return inductorNames; }
+
 };
 
 #endif
