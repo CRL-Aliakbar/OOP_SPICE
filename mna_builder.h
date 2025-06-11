@@ -29,6 +29,8 @@ private:
     std::vector<double> J;
     std::vector<double> E;
 
+
+
 public:
     explicit MNAMatrixBuilder(const Circuit& _circuit);
 
@@ -53,6 +55,10 @@ public:
     int getNumInductors() const { return numInductors; }
 
     std::vector<std::vector<double>>& accessD() { return D; }
+
+
+    std::vector<std::vector<double>>& accessB() { return B; }
+    std::vector<std::vector<double>>& accessC() { return C; }
 
 
     const std::vector<std::string>& getVoltageSourceNames() const { return voltageSourceNames; }

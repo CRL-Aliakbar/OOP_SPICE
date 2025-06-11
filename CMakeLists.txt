@@ -16,4 +16,6 @@ add_executable(OOP_SPICE
         time_domain_simulator.h
         ac_simulator.cpp
         ac_simulator.h
+        linear_solver_complex.cpp
+        linear_solver_complex.h
 )

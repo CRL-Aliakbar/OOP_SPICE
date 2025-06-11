@@ -5,6 +5,8 @@
 
 #include "linear_solver.h"
 #include "time_domain_simulator.h"
+#include "linear_solver_complex.h"
+#include "ac_simulator.h"
 
 bool nodeExists(const std::vector<Node>& nodes, int id) {
     for (const auto& node : nodes) {
@@ -96,5 +98,15 @@ int main() {
     TimeDomainSimulator simulator(circuit, 1e-7 /* dt */,  2e-4  /* totalTime */);
     simulator.runSimulation();
 
+    std::cout << "\n--- Starting AC Simulation ---\n";
+    ACSimulator acSim(circuit, 1000 /* frequency in Hz */);
+    acSim.runSimulation();
     return 0;
 }
+
+
+
+// ACSimulator acSim(circuit, 1000 /* 1 kHz مثلا */);
+// acSim.runSimulation();
+
+// دو خط بالا به زودی باید اضافه شوند.
