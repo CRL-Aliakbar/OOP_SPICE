@@ -44,7 +44,9 @@ static size_t bracket_index(const std::vector<std::pair<double,double>>& data, d
     }
     return lo;
 }
+static std::string elName(size_t idx) ;
 
+static int pickNodeAt(int mx, int my) ;
 struct CursorUI {
     bool enabled = false;   // حالت نشانگر فعال/غیرفعال
     bool hasPoint = false;  // آیا نقطه‌ای انتخاب شده؟
@@ -62,12 +64,10 @@ static void draw_cursor_icon(SDL_Renderer* r, const SDL_Rect& rc, bool on) {
     SDL_RenderDrawLine(r, cx-5, cy,   cx+5, cy);
     SDL_RenderDrawLine(r, cx,   cy-5, cx,   cy+5);
 }
-
+static void cleanupDanglingNodes() ;
 static bool point_in_rect(int x, int y, const SDL_Rect& rc) {
     return x >= rc.x && x <= rc.x + rc.w && y >= rc.y && y <= rc.y + rc.h;
 }
-
-
 
 static void draw_grid_linearXY(SDL_Renderer* r,
                                int L, int T, int W, int H, int R, int B,
@@ -110,6 +110,7 @@ static void draw_grid_logX(SDL_Renderer* r,
     }
 }
 
+static void draw_editor_grid(SDL_Renderer* r, int w, int h, int spacing);
 
 std::vector<double> parse_values_only(const std::string& path) {
     std::setlocale(LC_NUMERIC, "C");
@@ -295,10 +296,16 @@ std::vector<std::pair<double,double>> parse_tran_file(const std::string& path) {
 
 using namespace std;
 const int SNAP_RADIUS = 5; // snap distance in pixels for wires
+int MAGNET_RADIUS = 12;       // جذب به نزدیک‌ترین نود
+const int NODE_HIT_RADIUS = 10; // برای کلیک/راست‌کلیک
+const int HIT_PAD = 8;          // پدینگ باکس برخورد قطعات
+bool showNodeIds = true;
 
 // Union-Find for merging connected nodes
 std::vector<int> parent;
 
+
+static bool snapToNearestNode(int x, int y, int& sx, int& sy) ;
 int findParent(int x) {
     if (parent[x] != x) parent[x] = findParent(parent[x]);
     return parent[x];
@@ -326,11 +333,17 @@ void exportToFile(const std::string& path   ) ;
 static void clearAll();                        // NEW
 static std::string ask_user_for_save_path();   // NEW
 
-const int GRID_SIZE = 5;
+const int GRID_SIZE = 20;
 int snap(int value) {
     return (value + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
 }
-
+// --- grid-aligned lengths (multiples of GRID_SIZE)
+static inline int LEN_R() { return 3 * GRID_SIZE; }  // 60
+static inline int LEN_C() { return 2 * GRID_SIZE; }  // 40
+static inline int LEN_D() { return 3 * GRID_SIZE; }  // 60
+static inline int LEN_V() { return 4 * GRID_SIZE; }  // 80
+static inline int LEN_I() { return 4 * GRID_SIZE; }  // 80
+static inline int LEN_L() { return 4 * GRID_SIZE; }  // 80
 int current_rotation = 0;
 
 
@@ -397,6 +410,8 @@ struct Node {
 };
 vector<Node> nodes;
 
+
+
 struct Element {
     string type; // "R", "C", "L", "V", "I", "D"
     int node1, node2; // اندیس گره‌ها
@@ -404,13 +419,45 @@ struct Element {
 };
 
 // داده‌ی شکل موج برای منابع V/I
+// داده‌ی شکل موج برای منابع V/I
 struct SourceWF {
-    bool isSin = false;
-    std::string off, amp, freq; // به‌صورت خام نگه می‌داریم تا پسوندهای k,m,u... حفظ شوند
+    bool isSin   = false;
+    bool isPulse = false;
+    std::string off, amp, freq;  // برای SIN و PULSE
+    std::string pulseType;       // "Step" | "Square" | "Triangular" | "Delta"
 };
 
 
+
 vector<Element> elements;
+
+
+// فاصله نقطه تا پاره‌خط (px,py) تا (x1,y1)-(x2,y2)
+static double pointToSegmentDist(int px, int py, int x1, int y1, int x2, int y2) {
+    double vx = x2 - x1, vy = y2 - y1;
+    double wx = px - x1, wy = py - y1;
+    double c1 = vx*wx + vy*wy;
+    if (c1 <= 0) return std::hypot(px - x1, py - y1);
+    double c2 = vx*vx + vy*vy;
+    if (c2 <= c1) return std::hypot(px - x2, py - y2);
+    double t = c1 / c2;
+    double projx = x1 + t * vx, projy = y1 + t * vy;
+    return std::hypot(px - (int)projx, py - (int)projy);
+}
+
+// برمی‌گرداند index المنت در elements یا -1 اگر چیزی زیر ماوس نبود
+static int pickElementAt(int mx, int my, int hitPad = 8) {
+    // از آخر به اول تا «آخرین رسم‌شده» اولویت بگیرد
+    for (int i = (int)elements.size() - 1; i >= 0; --i) {
+        const auto& el = elements[i];
+        // گرفتن مختصات دو گرهٔ این المنت
+        int x1 = nodes[el.node1].x, y1 = nodes[el.node1].y;
+        int x2 = nodes[el.node2].x, y2 = nodes[el.node2].y;
+        double d = pointToSegmentDist(mx, my, x1, y1, x2, y2);
+        if (d <= hitPad) return i;
+    }
+    return -1;
+}
 
 bool del_select_active = false; // آیا در حال درگ راست برای رسم مستطیل هستیم؟
 int sel_x0 = 0, sel_y0 = 0;     // نقطه شروع (راست‌کلیک down)
@@ -419,6 +466,9 @@ int sel_x1 = 0, sel_y1 = 0;     // نقطه جاری/پایان
 
 // پیدا کردن یا ساخت گره جدید
 int findOrCreateNode(int x, int y) {
+
+    x = snap(x);
+    y = snap(y);
     // Snap to existing node if within SNAP_RADIUS
     for (int i = 0; i < (int)nodes.size(); i++) {
         int dx = nodes[i].x - x;
@@ -457,14 +507,39 @@ const int SCREEN_WIDTH = 1400;
 const int CONNECTOR_SIZE = 5; // اندازه مربع اتصال
 const double WIRE_RESISTANCE = 1e-6; // مقاومت خیلی کوچک برای سیم
 const int SCREEN_HEIGHT = 760;
-int resistor_offset_x = 0;
-
+//int resistor_offset_x = 0;
+// --- wire preview ---
+int preview_x2 = 0, preview_y2 = 0;
+bool preview_has = false;
 
 void draw_connector(SDL_Renderer* renderer, int cx, int cy) {
     SDL_Rect conn = { cx - CONNECTOR_SIZE/2, cy - CONNECTOR_SIZE/2, CONNECTOR_SIZE, CONNECTOR_SIZE };
     SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // قرمز
     SDL_RenderFillRect(renderer, &conn);
 }
+
+// طول‌های مضرب GRID
+static const int RES_LEN = 3 * GRID_SIZE;   // 60 وقتی GRID=20
+
+// گرد کردن به int
+static inline int roundi(double v){ return (int)std::round(v); }
+
+// از مختصات سرِ شماره ۱ (روی گرید) و زاویه، مبدأ رسم قبل از دوران را بساز
+static inline void originFromAnchorT1(int ax, int ay, int angle, int L, int &ox, int &oy){
+    double rad = angle * M_PI / 180.0;
+    int cx = ax + roundi((L/2.0) * std::cos(rad));
+    int cy = ay + roundi((L/2.0) * std::sin(rad));
+    ox = cx - L/2;   // مبدأ local قبل از دوران
+    oy = cy;
+}
+
+// سرِ دوم از روی سرِ اول و زاویه
+static inline void end2FromAnchorT1(int ax, int ay, int angle, int L, int &bx, int &by){
+    double rad = angle * M_PI / 180.0;
+    bx = ax + roundi(L * std::cos(rad));
+    by = ay + roundi(L * std::sin(rad));
+}
+
 
 void show_plot_window(const std::vector<std::pair<double,double>>& data,
                       const std::string& title = "TRAN Plot") {
@@ -599,6 +674,29 @@ static bool parseSIN(const std::string& s,
     }
     return false;
 }
+// تشخیص "PULSE <Type> (<off> <amp> <freq>)"  یا  "PULSE Delta"
+static bool parsePULSE(const std::string& s,
+                       std::string& type, std::string& off, std::string& amp, std::string& freq) {
+    static const std::regex reFull(
+        R"(^\s*(?:PULSE|pulse)\s+([A-Za-z]+)\s*\(\s*([^\s\)]+)\s+([^\s\)]+)\s+([^\s\)]+)\s*\)\s*$)",
+        std::regex::icase
+    );
+    std::smatch m;
+    if (std::regex_match(s, m, reFull) && m.size()==5) {
+        type = m[1]; off = m[2]; amp = m[3]; freq = m[4];
+        return true;
+    }
+    static const std::regex reDelta(
+        R"(^\s*(?:PULSE|pulse)\s+(Delta)\s*$)",
+        std::regex::icase
+    );
+    if (std::regex_match(s, m, reDelta)) {
+        type = "Delta"; off = "0"; amp = "0"; freq = "0";
+        return true;
+    }
+    return false;
+}
+
 
 // پارس فایل AC: انتظار هر خط حداقل دو عدد: freq  value
 static std::vector<std::pair<double,double>> parse_ac_pairs(const std::string& path) {
@@ -961,8 +1059,8 @@ int main(int argc, char* argv[]) {
                 quit = true;
 
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                int mx = snap(e.button.x);
-                int my = snap(e.button.y);
+                int mx = e.button.x;
+                int my = e.button.y;
                 if (mx >= 630 && mx <= 656 && my >= 20 && my <= 48) {
                     if (cursorMode == DELETE_SELECT) {
                         cursorMode = NORMAL;
@@ -1025,20 +1123,18 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 else if (cursorMode == PLACING_RESISTOR) {
-                    resistors.push_back({ snap(mx - 20 + resistor_offset_x), snap(my), current_rotation });
-                    {
-                        int cx1 = snap(mx - 20 + resistor_offset_x);
-                        int cy1 = snap(my);
-                        int cx2 = snap(mx - 20 + resistor_offset_x + 70);
-                        int cy2 = snap(my);
-                        findOrCreateNode(cx1, cy1);
-                        findOrCreateNode(cx2, cy2);
-                        {
-                            std::string valStr = getElementValueFromUser("enter R value:");
-                            double val = atof(valStr.c_str());
-                            elements.push_back({"R", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), val});
-                        }
-                    }
+                    int cx   = snap(mx);
+                    int cy   = snap(my);
+                    int left = snap(cx - LEN_R()/2);
+                    resistors.push_back({ left, cy, current_rotation });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_R(), cy);
+
+                    std::string valStr = getElementValueFromUser("enter R value:");
+                    double val = atof(valStr.c_str());
+                    elements.push_back({ "R", n1, n2, val });
+
                     cursorMode = NORMAL;
                     SDL_ShowCursor(SDL_ENABLE);
                     SDL_SetCursor(cursor);
@@ -1051,124 +1147,118 @@ int main(int argc, char* argv[]) {
                     if (activeBGroup >= 0) labelB_groups[activeBGroup].push_back(nid);
                     labelB_session_count++;
                 }
-                          else if (cursorMode == PLACING_CURRENT_SOURCE) {
-                                    currents.push_back({ snap(mx - 35), snap(my) });
-                                   int cx1 = snap(mx - 35), cy1 = snap(my);
-                                    int cx2 = snap(mx - 35 + 70), cy2 = snap(my);
-                                    findOrCreateNode(cx1, cy1);
-                                    findOrCreateNode(cx2, cy2);
-                                    {
-                                           std::string valStr = getElementValueFromUser("enter I (A):");
-                                            double val = atof(valStr.c_str());
-                                            elements.push_back({"I", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), val});
-                                        }
-                                   cursorMode = NORMAL;
-                                    SDL_ShowCursor(SDL_ENABLE);
-                                    SDL_SetCursor(cursor);
-                               }
+                else if (cursorMode == PLACING_CURRENT_SOURCE) {
+                    int cx = snap(mx), cy = snap(my);
+                    int left = cx - LEN_I()/2;
+                    currents.push_back({ left, cy });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_I(), cy);
+
+                    std::string iStr = getElementValueFromUser("enter I: (e.g. 2 or SIN(0 5 1k) or PULSE Square (0 5 1k))");
+                    int idx = (int)elements.size();
+
+                    std::string off, amp, freq, ptype;
+                    if (parseSIN(iStr, off, amp, freq)) {
+                        elements.push_back({ "I", n1, n2, 0.0 });
+                        srcWFByIdx[idx] = { true, false, off, amp, freq, "" };
+                    } else if (parsePULSE(iStr, ptype, off, amp, freq)) {
+                        elements.push_back({ "I", n1, n2, 0.0 });
+                        SourceWF wf; wf.isSin=false; wf.isPulse=true; wf.off=off; wf.amp=amp; wf.freq=freq; wf.pulseType=ptype;
+                        srcWFByIdx[idx] = wf;
+                    } else {
+                        double val = atof(iStr.c_str());
+                        elements.push_back({ "I", n1, n2, val });
+                    }
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
+                }
+
                 else if (cursorMode == NORMAL && mx >= 735 && mx <= 761 && my >= 20 && my <= 48) {
                     cursorMode = PLACING_CAPACITOR;
                     SDL_ShowCursor(SDL_DISABLE);
                 }
                 else if (cursorMode == PLACING_CAPACITOR) {
-                    capacitors.push_back({ snap(mx - 15), snap(my) });
-                    {
-                        int cx1 = snap(mx - 15);
-                        int cy1 = snap(my);
-                        int cx2 = snap(mx - 15 + 35);
-                        int cy2 = snap(my);
-                        findOrCreateNode(cx1, cy1);
-                        findOrCreateNode(cx2, cy2);
-                        {
-                            std::string valStr = getElementValueFromUser("enter C vlue:");
-                            double val = atof(valStr.c_str());
-                            elements.push_back({"C", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), val});
-                        }
-                    }
-                    cursorMode = NORMAL;
-                    SDL_ShowCursor(SDL_ENABLE);
-                    SDL_SetCursor(cursor);
+                    int cx = snap(mx), cy = snap(my);
+                    int left = cx - LEN_C()/2;
+                    capacitors.push_back({ left, cy });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_C(), cy);
+
+                    std::string valStr = getElementValueFromUser("enter C value:");
+                    double val = atof(valStr.c_str());
+                    elements.push_back({ "C", n1, n2, val });
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
                 }
                 else if (cursorMode == NORMAL && mx >= 770 && mx <= 796 && my >= 20 && my <= 48) {
                     cursorMode = PLACING_DIODE;
                     SDL_ShowCursor(SDL_DISABLE);
                 }
                 else if (cursorMode == PLACING_DIODE) {
-                    diodes.push_back({ snap(mx - 15), snap(my) });
-                    {
-                        int cx1 = snap(mx - 15);
-                        int cy1 = snap(my);
-                        int cx2 = snap(mx - 15 + 45);
-                        int cy2 = snap(my);
-                        findOrCreateNode(cx1, cy1);
-                        findOrCreateNode(cx2, cy2);
-                        {
-                            //  std::string valStr = getElementValueFromUser("enter D value:");
-                            // double val = atof(valStr.c_str());
-                            elements.push_back({"D", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), 0});
-                        }
-                    }
-                    cursorMode = NORMAL;
-                    SDL_ShowCursor(SDL_ENABLE);
-                    SDL_SetCursor(cursor);
+                    int cx = snap(mx), cy = snap(my);
+                    int left = cx - LEN_D()/2;
+                    diodes.push_back({ left, cy });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_D(), cy);
+                    elements.push_back({ "D", n1, n2, 0 });
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
                 }
+
                 else if (cursorMode == NORMAL && mx >= 805 && mx <= 831 && my >= 20 && my <= 48) {
                     cursorMode = PLACING_VOLTAGE;
                     SDL_ShowCursor(SDL_DISABLE);
                 }
                 else if (cursorMode == PLACING_VOLTAGE) {
-                    voltages.push_back({ snap(mx - 35), snap(my) });
-                    {
-                        int cx1 = snap(mx - 35);
-                        int cy1 = snap(my);
-                        int cx2 = snap(mx - 35 + 70);
-                        int cy2 = snap(my);
-                        findOrCreateNode(cx1, cy1);
-                        findOrCreateNode(cx2, cy2);
-                        {
-                            std::string vStr = getElementValueFromUser(
-           "enter V: (e.g. 5   or   SIN(0 5 1k))"
-       );
-                            int idx = (int)elements.size();           // عنصر بعدی
-                            std::string off, amp, freq;
-                            if (parseSIN(vStr, off, amp, freq)) {
-                                // AC (سینوسی)
-                                elements.push_back({ "V", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), 0.0 });
-                                srcWFByIdx[idx] = { true, off, amp, freq };
-                            } else {
-                                // DC
-                                double val = atof(vStr.c_str());
-                                elements.push_back({ "V", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), val });
-                            }}
+                    int cx = snap(mx), cy = snap(my);
+                    int left = cx - LEN_V()/2;
+                    voltages.push_back({ left, cy });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_V(), cy);
+
+                    std::string vStr = getElementValueFromUser("enter V: (e.g. 5 or SIN(0 5 1k) or PULSE Square (0 5 1k))");
+                    int idx = (int)elements.size();
+
+                    std::string off, amp, freq, ptype;
+                    if (parseSIN(vStr, off, amp, freq)) {
+                        elements.push_back({ "V", n1, n2, 0.0 });
+                        srcWFByIdx[idx] = { true, false, off, amp, freq, "" };
+                    } else if (parsePULSE(vStr, ptype, off, amp, freq)) {
+                        elements.push_back({ "V", n1, n2, 0.0 });
+                        SourceWF wf; wf.isSin=false; wf.isPulse=true; wf.off=off; wf.amp=amp; wf.freq=freq; wf.pulseType=ptype;
+                        srcWFByIdx[idx] = wf;
+                    } else {
+                        double val = atof(vStr.c_str());
+                        elements.push_back({ "V", n1, n2, val });
                     }
-                    cursorMode = NORMAL;
-                    SDL_ShowCursor(SDL_ENABLE);
-                    SDL_SetCursor(cursor);
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
                 }
+
 
                 else if (cursorMode == NORMAL && mx >= 840 && mx <= 866 && my >= 20 && my <= 48) {
                     cursorMode = PLACING_INDUCTOR;
                     SDL_ShowCursor(SDL_DISABLE);
                 }
                 else if (cursorMode == PLACING_INDUCTOR) {
-                    inductors.push_back({ snap(mx - 55), snap(my) });
-                    {
-                        int cx1 = snap(mx - 55);
-                        int cy1 = snap(my);
-                        int cx2 = snap(mx - 55 + 108);
-                        int cy2 = snap(my);
-                        findOrCreateNode(cx1, cy1);
-                        findOrCreateNode(cx2, cy2);
-                        {
-                            std::string valStr = getElementValueFromUser("enter L value:");
-                            double val = atof(valStr.c_str());
-                            elements.push_back({"L", findOrCreateNode(cx1, cy1), findOrCreateNode(cx2, cy2), val});
-                        }
-                    }
-                    cursorMode = NORMAL;
-                    SDL_ShowCursor(SDL_ENABLE);
-                    SDL_SetCursor(cursor);
+                    int cx = snap(mx), cy = snap(my);
+                    int left = cx - LEN_L()/2;
+                    inductors.push_back({ left, cy });
+
+                    int n1 = findOrCreateNode(left, cy);
+                    int n2 = findOrCreateNode(left + LEN_L(), cy);
+
+                    std::string valStr = getElementValueFromUser("enter L value:");
+                    double val = atof(valStr.c_str());
+                    elements.push_back({ "L", n1, n2, val });
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
                 }
+
                 else if (cursorMode == NORMAL && mx >= 665 && mx <= 690 && my >= 20 && my <= 48) {
                     cursorMode = DRAWING_WIRE;
                 }
@@ -1187,29 +1277,32 @@ int main(int argc, char* argv[]) {
                     SDL_ShowCursor(SDL_DISABLE);
                 }
                 else if (cursorMode == PLACING_GROUND) {
-                    // Place 28x28 icon with its top-center as the connector node
-                    int gx = snap(mx - 14); // center the 28px icon horizontally under cursor
-                    int gy = snap(my);      // align top of icon to grid
-                    grounds.push_back({ gx, gy });
-                    int nodeId = findOrCreateNode(gx + 14, gy);
+                    int cx = snap(mx), cy = snap(my);   // مرکز آیکون روی گرید
+                    int left = cx - 14;                 // چون آیکون 28px است
+                    grounds.push_back({ left, cy });
+
+                    int nodeId = findOrCreateNode(cx, cy); // کانکتور بالای آیکون = مرکز
                     ground_node_ids.push_back(nodeId);
-                    cursorMode = NORMAL;
-                    SDL_ShowCursor(SDL_ENABLE);
-                    SDL_SetCursor(cursor);
+
+                    cursorMode = NORMAL; SDL_ShowCursor(SDL_ENABLE); SDL_SetCursor(cursor);
                 }
+
 
                 else if (cursorMode == DRAWING_WIRE) {
                     if (!wire_in_progress) {
-                        wire_start_x = snap(mx);
-                        wire_start_y = snap(my);
+                        int sx = snap(mx), sy = snap(my);
+                        if (snapToNearestNode(sx, sy, sx, sy)) { /* sx,sy به نود چسبید */ }
+                        wire_start_x = sx; wire_start_y = sy;
+
                         wire_in_progress = true;
                     } else {
-                        int dx = abs(mx - wire_start_x);
-                        int dy = abs(my - wire_start_y);
-                        int x2 = snap(dx > dy ? mx : wire_start_x);
-                        int y2 = snap(dx > dy ? wire_start_y : my);
+                        int x2 = snap(mx), y2 = snap(my);
+                        int sx=x2, sy=y2;
+                        if (snapToNearestNode(x2, y2, sx, sy)) { x2 = sx; y2 = sy; }
                         wires.push_back({ wire_start_x, wire_start_y, x2, y2 });
                         wire_in_progress = false;
+                        preview_has = false;
+
                         {
                             int n1 = findOrCreateNode(wire_start_x, wire_start_y);
                             int n2 = findOrCreateNode(x2, y2);
@@ -1238,8 +1331,37 @@ int main(int argc, char* argv[]) {
 
 
             }
-            else if (e.type == SDL_KEYDOWN) {
+            else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
+                int mx = e.button.x;
+                int my = e.button.y;
 
+                // اول: المنت زیر ماوس؟
+                int eid = pickElementAt(mx, my, /*hitPad=*/ std::max(8, GRID_SIZE/2));
+                if (eid >= 0) {
+                    const auto& el = elements[eid];
+                    std::ostringstream ss;
+                    ss << elName((size_t)eid)              // مثل R3
+                       << "  type=" << el.type             // نوع مثل "R"
+                       << "  value=" << el.value;          // مقدار (برای V/I DC هم نمایش می‌دهد)
+
+                    MessageBoxA(NULL, ss.str().c_str(), "Element", MB_OK | MB_ICONINFORMATION);
+                    // اگر موج V/I غیر DC هم داری و می‌خواهی نشان بدهی، از map مربوط به موج‌ها بخوانی (srcWFByIdx)
+                    // (ایندکس همان eid است که قبلاً ذخیره کرده‌ای.)
+                    break;
+                }
+
+                // دوم: اگر المنت نبود، می‌تونی نود نزدیک را هم چک کنی (اختیاری):
+                // از تابع آمادهٔ خودت استفاده کن:
+                int nid = getExistingNodeIdAt(mx, my);  // همین الان در کدت موجود است
+                if (nid >= 0) {
+                    std::string msg = "Node (" + std::to_string(nodes[nid].x) + "," + std::to_string(nodes[nid].y) + ")";
+                    MessageBoxA(NULL, msg.c_str(), "Node", MB_OK | MB_ICONINFORMATION);
+                    break;
+                }
+            }
+
+            else if (e.type == SDL_KEYDOWN) {
+                if (e.key.keysym.sym == SDLK_n) showNodeIds = !showNodeIds;
                 if (e.key.keysym.sym == SDLK_e) {
     exportToFile("circuit.txt");
                     // یک پیام ساده هم نمایش بده (اختیاری):
@@ -1252,7 +1374,7 @@ int main(int argc, char* argv[]) {
                     if (e.key.keysym.sym == SDLK_r) {
                         if (cursorMode == PLACING_RESISTOR) {
                             current_rotation = (current_rotation + 90) % 360;
-                            resistor_offset_x -= 5;
+                           // resistor_offset_x -= 5;
                         }
                     }
                 }
@@ -1261,6 +1383,18 @@ int main(int argc, char* argv[]) {
                 sel_x1 = snap(e.motion.x);
                 sel_y1 = snap(e.motion.y);
             }
+            else if (e.type == SDL_MOUSEMOTION) {
+                if (cursorMode == DRAWING_WIRE && wire_in_progress) {
+                    // مختصات ماوس → اسنپ روی گرید
+                    int mx = snap(e.motion.x);
+                    int my = snap(e.motion.y);
+
+                    preview_x2 = mx;
+                    preview_y2 = my;
+                    preview_has = true;
+                }
+            }
+
             if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
     if (cursorMode == DELETE_SELECT && del_select_active) {
         del_select_active = false;
@@ -1297,9 +1431,12 @@ int main(int argc, char* argv[]) {
 
         // 3) قطعات نمایشی + elements متناظر (مرزهای کامل داخل مستطیل)
         // مقاومت: دو سر نمایشی بعد از چرخش را چک کن (تابع rotated_res_ends مثل قبل)
+        // قبلی که 70 ثابت داشت را با این جایگزین کن:
         auto rotated_res_ends = [&](int x, int y, int angle, int &ex1, int &ey1, int &ex2, int &ey2) {
-            int px0 = x, py0 = y, px7 = x + 70, py7 = y;
-            int cx = x + 35, cy = y;
+            int L = LEN_R();                  // ← طول واقعی مقاومت (مثلاً 60)
+            int px0 = x,      py0 = y;
+            int px7 = x + L,  py7 = y;
+            int cx  = x + L/2, cy = y;
             double rad = angle * M_PI / 180.0;
             auto rot = [&](int &xx, int &yy){
                 int tx = xx - cx, ty = yy - cy;
@@ -1311,6 +1448,7 @@ int main(int argc, char* argv[]) {
             ex1 = px0; ey1 = py0; ex2 = px7; ey2 = py7;
         };
 
+
         { // R
             std::vector<Resistor> keep;
             for (auto &r : resistors) {
@@ -1318,60 +1456,66 @@ int main(int argc, char* argv[]) {
                 rotated_res_ends(r.x, r.y, r.angle, ex1, ey1, ex2, ey2);
                 bool in1 = insideRect(ex1, ey1, rx, ry, rw, rh);
                 bool in2 = insideRect(ex2, ey2, rx, ry, rw, rh);
-                if (in1 && in2) remove_element_by_2nodes("R", r.x, r.y, r.x+70, r.y);
-                else keep.push_back(r);
+                if (in1 && in2) {
+                    // به remove_element_by_2nodes مختصات همان سرها را بده
+                    remove_element_by_2nodes("R", ex1, ey1, ex2, ey2);
+                } else {
+                    keep.push_back(r);
+                }
             }
             resistors.swap(keep);
         }
-        { // C: (x,y) تا (x+35,y)
+        { // C: از x تا x+LEN_C()
             std::vector<Capacitor> keep;
             for (auto &c : capacitors) {
-                int ex1=c.x, ey1=c.y, ex2=c.x+35, ey2=c.y;
+                int ex1=c.x, ey1=c.y, ex2=c.x + LEN_C(), ey2=c.y;   // ← به‌جای 35
                 bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);
                 if (in1 && in2) remove_element_by_2nodes("C", ex1, ey1, ex2, ey2);
                 else keep.push_back(c);
             }
             capacitors.swap(keep);
         }
-        { // D: (x,y) تا (x+45,y)
+        { // D: از x تا x+LEN_D()
             std::vector<Diode> keep;
             for (auto &d : diodes) {
-                int ex1=d.x, ey1=d.y, ex2=d.x+45, ey2=d.y;
+                int ex1=d.x, ey1=d.y, ex2=d.x + LEN_D(), ey2=d.y;   // ← به‌جای 45
                 bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);
                 if (in1 && in2) remove_element_by_2nodes("D", ex1, ey1, ex2, ey2);
                 else keep.push_back(d);
             }
             diodes.swap(keep);
         }
-        { // V: (x,y) تا (x+70,y)
+        { // V: از x تا x+LEN_V()
             std::vector<Voltage> keep;
             for (auto &v : voltages) {
-                int ex1=v.x, ey1=v.y, ex2=v.x+70, ey2=v.y;
+                int ex1=v.x, ey1=v.y, ex2=v.x + LEN_V(), ey2=v.y;   // ← به‌جای 70
                 bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);
                 if (in1 && in2) remove_element_by_2nodes("V", ex1, ey1, ex2, ey2);
                 else keep.push_back(v);
             }
             voltages.swap(keep);
         }
-        { // I: (x,y) تا (x+70,y)
+        { // I: از x تا x+LEN_I()
             std::vector<CurrentSrc> keep;
             for (auto &i : currents) {
-                               int ex1=i.x, ey1=i.y, ex2=i.x+70, ey2=i.y;
-                              bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);if (in1 && in2) remove_element_by_2nodes("I", ex1, ey1, ex2, ey2);
-                              else keep.push_back(i);
-                          }
-                       currents.swap(keep);
-                  }
-        { // L: (x,y) تا (x+108,y)
+                int ex1=i.x, ey1=i.y, ex2=i.x + LEN_I(), ey2=i.y;   // ← به‌جای 70
+                bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);
+                if (in1 && in2) remove_element_by_2nodes("I", ex1, ey1, ex2, ey2);
+                else keep.push_back(i);
+            }
+            currents.swap(keep);
+        }
+        { // L: از x تا x+LEN_L()
             std::vector<Inductor> keep;
             for (auto &ind : inductors) {
-                int ex1=ind.x, ey1=ind.y, ex2=ind.x+108, ey2=ind.y;
+                int ex1=ind.x, ey1=ind.y, ex2=ind.x + LEN_L(), ey2=ind.y;   // ← به‌جای 108
                 bool in1=insideRect(ex1,ey1,rx,ry,rw,rh), in2=insideRect(ex2,ey2,rx,ry,rw,rh);
                 if (in1 && in2) remove_element_by_2nodes("L", ex1, ey1, ex2, ey2);
                 else keep.push_back(ind);
             }
             inductors.swap(keep);
         }
+
         { // GND: آیکون 28x28 باید کامل داخل مستطیل باشد
             std::vector<Ground> keep;
             for (auto &g : grounds) {
@@ -1388,8 +1532,8 @@ int main(int argc, char* argv[]) {
                 }
             }
             grounds.swap(keep);
-        }
 
+        }
 
         // B label: نقطه 5x5 باید "کامل" داخل مستطیل باشد
         {
@@ -1404,8 +1548,10 @@ int main(int argc, char* argv[]) {
                 // اگر fullyInside بود، عمداً نگه نمی‌داریم ⇒ حذف می‌شود
             }
             labelsB.swap(keep);
-        }
 
+
+        }
+        cleanupDanglingNodes();
 
         // 4) سینک کردن elements با wires باقی‌مانده (حذف R با مقدار سیم)
         {
@@ -1491,7 +1637,7 @@ int main(int argc, char* argv[]) {
 
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         SDL_RenderClear(renderer);
-
+        draw_editor_grid(renderer, SCREEN_WIDTH, SCREEN_HEIGHT, GRID_SIZE);
         rect(renderer, 0, 0, SCREEN_WIDTH, 73, 200, 200, 200, 255, 1);
          texture(renderer, 700, 20, "resistor1.png", 26, 28);
         texture(renderer, 735, 20, "capacitor1.png", 26, 28);
@@ -1534,37 +1680,49 @@ int main(int argc, char* argv[]) {
             draw_connector(renderer, w.x1, w.y1);
             draw_connector(renderer, w.x2, w.y2);
         }
+        if (showNodeIds) {
+            for (const auto& n : nodes) {
+                char buf[16];
+                sprintf(buf, "%d", n.id);
+                // کمی راست-بالا نسبت به خود گره تا با مربع قرمز تداخل نداشته باشه
+                stringRGBA(renderer, n.x + 6, n.y - 10, (char*)buf, 0, 0, 0, 255);
+            }
+        }
+
         int mx, my; SDL_GetMouseState(&mx, &my);
         mx = snap(mx); my = snap(my);
 
         if (cursorMode == PLACING_RESISTOR) {
-            draw_resistor(renderer, mx - 20 +  resistor_offset_x, my, current_rotation);
-        } else if (cursorMode == PLACING_CAPACITOR) {
-            draw_capacity(renderer, mx - 15, my);
+            // جدید (Anchor = مرکز ماوس → چپ = مرکز - LEN_R()/2):
+            int left = snap(mx - LEN_R()/2);
+            draw_resistor(renderer, left, my, current_rotation);
+        }   else if (cursorMode == PLACING_CAPACITOR) {
+draw_capacity(renderer,        mx - LEN_C()/2, my);
         } else if (cursorMode == PLACING_DIODE) {
-            draw_diode(renderer, mx - 15, my);
+            draw_diode(renderer,           mx - LEN_D()/2, my);
+
         }  else if (cursorMode == PLACING_LABEL_B) {
             SDL_Rect s = { mx - 2, my - 2, 5, 5 };
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderFillRect(renderer, &s);
             stringRGBA(renderer, mx + 8, my - 8, (char*)"B", 0, 0, 0, 255);
         }else if (cursorMode == PLACING_VOLTAGE) {
-            draw_voltage(renderer, mx - 35, my);
+            draw_voltage(renderer,         mx - LEN_V()/2, my);
         } else if (cursorMode == PLACING_CURRENT_SOURCE) {
-            draw_current_source(renderer, mx - 35, my);
+            draw_current_source(renderer,  mx - LEN_I()/2, my);
         }else if (cursorMode == PLACING_INDUCTOR) {
-            draw_inductor(renderer, mx - 55, my);
+            draw_inductor(renderer,        mx - LEN_L()/2, my);
         }
         else if (cursorMode == PLACING_GROUND) {
             draw_ground(renderer, mx - 14, my);
-        } else if (cursorMode == DRAWING_WIRE && wire_in_progress) {
-            int dx = abs(mx - wire_start_x);
-            int dy = abs(my - wire_start_y);
-            int x2 = snap(dx > dy ? mx : wire_start_x);
-            int y2 = snap(dx > dy ? wire_start_y : my);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);
-            SDL_RenderDrawLine(renderer, wire_start_x, wire_start_y, x2, y2);
+        } else if (cursorMode == DRAWING_WIRE && wire_in_progress && preview_has) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255); // اگر شفاف می‌خواهی: BlendMode را فعال کن
+            SDL_RenderDrawLine(renderer, wire_start_x, wire_start_y, preview_x2, preview_y2);
+            // (اختیاری) کانکتورهای دو سر پیش‌نمایش:
+             draw_connector(renderer, wire_start_x, wire_start_y);
+             draw_connector(renderer, preview_x2, preview_y2);
         }
+
         if (cursorMode == DELETE_SELECT && del_select_active) {
             int rx, ry, rw, rh;
             normRect(sel_x0, sel_y0, sel_x1, sel_y1, rx, ry, rw, rh);
@@ -1624,130 +1782,128 @@ void draw_ground(SDL_Renderer* renderer, int x, int y) {
 }
 
 void draw_resistor(SDL_Renderer* renderer, int x, int y, int angle) {
-    // مقاومت: نقاط پایه (بدون چرخش) از x تا x+70، مرکز برای چرخش x+35
-    int px[8] = { x, x + 10, x + 20, x + 30, x + 40, x + 50, x + 60, x + 70 };
-    int py[8] = { y, y, y - 10, y + 10, y - 10, y + 10, y, y };
-    int center_x = x + 35; // مرکز چرخش
-    int center_y = y;
-    for (int i = 0; i < 8; i++) {
-        rotate_point(center_x, center_y, px[i], py[i], angle);
+    const int L = LEN_R();
+    const double step = double(L) / 7.0;  // 8 segment points (0..7)
+    int amp = GRID_SIZE / 2; if (amp < 6) amp = 6;
+
+    int px[8], py[8];
+    for (int i = 0; i < 8; ++i) {
+        px[i] = x + int(std::round(i * step));
+        py[i] = y;
     }
+    // زیگزاگ
+    py[2] = y - amp; py[3] = y + amp; py[4] = y - amp; py[5] = y + amp;
 
-    // رسم خطوط مقاومت
-    SDL_RenderDrawLine(renderer, px[0], py[0], px[1], py[1]);
-    SDL_RenderDrawLine(renderer, px[1], py[1], px[2], py[2]);
-    SDL_RenderDrawLine(renderer, px[2], py[2], px[3], py[3]);
-    SDL_RenderDrawLine(renderer, px[3], py[3], px[4], py[4]);
-    SDL_RenderDrawLine(renderer, px[4], py[4], px[5], py[5]);
-    SDL_RenderDrawLine(renderer, px[5], py[5], px[6], py[6]);
-    SDL_RenderDrawLine(renderer, px[6], py[6], px[7], py[7]);
+    // چرخش حول مرکز
+    int cx = x + L/2, cy = y;
+    for (int i = 0; i < 8; ++i) rotate_point(cx, cy, px[i], py[i], angle);
 
-    // کانکتورها در انتهای واقعی المان (بعد از چرخش)
+    // رسم
+    for (int i = 0; i < 7; ++i) SDL_RenderDrawLine(renderer, px[i], py[i], px[i+1], py[i+1]);
     draw_connector(renderer, px[0], py[0]);
     draw_connector(renderer, px[7], py[7]);
 }
 
 
 
-void draw_capacity(SDL_Renderer* renderer, int x, int y, int angle  ) {
-    // ساختار اصلی بدون چرخش: از x تا x+35
-    int x1 = 15;
-    int y1 = 15;
-    int ex1 = x;
-    int ex2 = x + x1 + 5 + x1; // x + 35
+void draw_capacity(SDL_Renderer* renderer, int x, int y, int angle) {
+    const int L = LEN_C();
+    const int gap = GRID_SIZE;           // فاصله بین دو صفحه
+    const int lead = (L - gap) / 2;      // طول سیم‌های دو طرف
+    const int plateH = GRID_SIZE;        // ارتفاع صفحات
 
-    // برای این عنصر فعلاً رسم بدون چرخش انجام می‌شود (مطابق پیاده‌سازی قبلی)
-    // کانکتورها باید دقیقا روی نقاط ابتدایی و انتهایی قرار بگیرند
-    draw_connector(renderer, ex1, y);
-    draw_connector(renderer, ex2, y);
+    int x1 = x + lead;        // صفحهٔ اول
+    int x2 = x1 + gap;        // صفحهٔ دوم
 
-    // رسم خطوط (همانند کد قبلی)
-    SDL_RenderDrawLine(renderer, x, y, x + x1, y);
-    SDL_RenderDrawLine(renderer, x + x1, y - y1, x + x1, y + y1);
-    SDL_RenderDrawLine(renderer, x + x1 + 5, y - y1, x + x1 + 5, y + y1);
-    SDL_RenderDrawLine(renderer, x + x1 + 5, y , x + x1 + 5 + x1, y);
+    // (در این نسخه چرخش اعمال نمی‌کنیم؛ اگر زاویه لازم داشتی مشابه مقاومت حول مرکز بچرخان)
+    SDL_RenderDrawLine(renderer, x, y, x1, y);                  // سیم چپ
+    SDL_RenderDrawLine(renderer, x2, y, x + L, y);              // سیم راست
+    SDL_RenderDrawLine(renderer, x1, y - plateH/2, x1, y + plateH/2);
+    SDL_RenderDrawLine(renderer, x2, y - plateH/2, x2, y + plateH/2);
+
+    draw_connector(renderer, x, y);
+    draw_connector(renderer, x + L, y);
 }
 
 
-void draw_diode(SDL_Renderer* renderer, int x, int y , int angle ) {
-    // ساختار اصلی بدون چرخش: از x تا x+45
-    int x1 = 15;
-    int ex1 = x;
-    int ex2 = x + x1 + 15 + x1; // x + 45
-    draw_connector(renderer, ex1, y);
-    draw_connector(renderer, ex2, y);
+void draw_diode(SDL_Renderer* renderer, int x, int y, int angle) {
+    const int L = LEN_D();
+    const int u = L / 3;                 // lead / body / lead
+    const int h = GRID_SIZE / 2; if (h < 6) {} // ارتفاع
 
-    int y1 = 15;
-    SDL_RenderDrawLine(renderer, x, y, x + x1, y);
-    SDL_RenderDrawLine(renderer, x + x1, y - y1, x + x1 , y + y1);
-    SDL_RenderDrawLine(renderer, x + x1, y - y1, x + x1 + 15, y );
-    SDL_RenderDrawLine(renderer, x + x1, y + y1, x + x1 + 15, y );
-    SDL_RenderDrawLine(renderer, x + x1 + 15, y - y1, x + x1 + 15, y + y1);
-    SDL_RenderDrawLine(renderer, x + x1 + 15, y, x + x1 + x1 + 15, y);
+    // سیم‌های چپ و راست
+    SDL_RenderDrawLine(renderer, x, y, x + u, y);
+    SDL_RenderDrawLine(renderer, x + 2*u, y, x + L, y);
+
+    // بدنهٔ دیود (مثلث + خط کاتد در x+2u)
+    SDL_RenderDrawLine(renderer, x + u, y - h, x + u, y + h);          // ضلع عمودی مثلث
+    SDL_RenderDrawLine(renderer, x + u, y - h, x + 2*u, y);            // ضلع بالا
+    SDL_RenderDrawLine(renderer, x + u, y + h, x + 2*u, y);            // ضلع پایین
+    SDL_RenderDrawLine(renderer, x + 2*u, y - h, x + 2*u, y + h);      // کاتد
+
+    draw_connector(renderer, x, y);
+    draw_connector(renderer, x + L, y);
 }
 
 
-void draw_voltage(SDL_Renderer* renderer, int x, int y , int angle ) {
-    // ساختار اصلی بدون چرخش: از x تا x+70
-    int x1 = 15;
-    int ex1 = x;
-    int ex2 = x + x1 + 40 + x1; // x + 70
-    draw_connector(renderer, ex1, y);
-    draw_connector(renderer, ex2, y);
+void draw_voltage(SDL_Renderer* renderer, int x, int y, int angle) {
+    const int L = LEN_V();
+    const int r = L / 4;  // شعاع دایره
+    // سیم‌ها
+    SDL_RenderDrawLine(renderer, x, y, x + r, y);
+    SDL_RenderDrawLine(renderer, x + 3*r, y, x + L, y);
+    // دایره
+    circleRGBA(renderer, x + L/2, y, r, 0, 0, 0, 255);
+    // علامت + و - داخل دایره (ساده)
+    SDL_RenderDrawLine(renderer, x + L/2 - 8, y, x + L/2 - 18, y);
+    SDL_RenderDrawLine(renderer, x + L/2 + 8, y - 5, x + L/2 + 8, y + 5);
 
-    int y1 = 15;
-    SDL_RenderDrawLine(renderer, x, y, x + x1, y);
-    circleRGBA(renderer, x + x1 + 20, y, 20, 0, 0, 0, 255);
-    SDL_RenderDrawLine(renderer, x + x1 + 40, y, x + x1 + 40 + x1, y);
-    SDL_RenderDrawLine(renderer, x + x1 + 3, y, x + x1 + 13, y);
-    SDL_RenderDrawLine(renderer, x + x1 + 27, y, x + x1 + 37, y);
-    SDL_RenderDrawLine(renderer, x + x1 + 32, y - 5, x + x1 + 32, y + 5);
+    draw_connector(renderer, x, y);
+    draw_connector(renderer, x + L, y);
 }
 
-void draw_current_source(SDL_Renderer* renderer, int x, int y , int angle ) {
-        // مشابه ولتاژ: طول کل 70px و دو کانکتور
-        int x1 = 15;
-        int ex1 = x;
-        int ex2 = x + x1 + 40 + x1; // x + 70
-        draw_connector(renderer, ex1, y);
-        draw_connector(renderer, ex2, y);
-        // سیم‌های دو طرف و دایره مرکزی
-        SDL_RenderDrawLine(renderer, x, y, x + x1, y);
-        circleRGBA(renderer, x + x1 + 20, y, 20, 0, 0, 0, 255);
-        SDL_RenderDrawLine(renderer, x + x1 + 40, y, x + x1 + 40 + x1, y);
-        // فلش جریان به سمت راست داخل دایره
-        int ax1 = x + x1 + 12, ay = y;
-        int ax2 = x + x1 + 28;
-        SDL_RenderDrawLine(renderer, ax1, ay, ax2, ay);          // بدنه فلش
-        SDL_RenderDrawLine(renderer, ax2, ay, ax2 - 5, ay - 5);  // سر فلش
-        SDL_RenderDrawLine(renderer, ax2, ay, ax2 - 5, ay + 5);
-    }
-void draw_inductor(SDL_Renderer* renderer, int x, int y , int angle ) {
-    // ساختار اصلی بدون چرخش:
-    int radius = 13;
-    int spacing = 15;
-    int count = 3;
-    // کانکتورها: ابتدا x و انتها x + totalWidth + 2*spacing
-    int totalWidth = count * radius * 2; // عرض مجموعه نیم‌دایره‌ها
-    int ex1 = x;
-    int ex2 = x + totalWidth + 2 * spacing; // x + 108 برای مقدارهای فعلی
-    draw_connector(renderer, ex1, y);
-    draw_connector(renderer, ex2, y);
+void draw_current_source(SDL_Renderer* renderer, int x, int y, int angle) {
+    const int L = LEN_I();
+    const int r = L / 4;
+    SDL_RenderDrawLine(renderer, x, y, x + r, y);
+    SDL_RenderDrawLine(renderer, x + 3*r, y, x + L, y);
+    circleRGBA(renderer, x + L/2, y, r, 0, 0, 0, 255);
+    // فلش داخل دایره
+    int ax1 = x + L/2 - 8, ax2 = x + L/2 + 8;
+    SDL_RenderDrawLine(renderer, ax1, y, ax2, y);
+    SDL_RenderDrawLine(renderer, ax2, y, ax2 - 5, y - 5);
+    SDL_RenderDrawLine(renderer, ax2, y, ax2 - 5, y + 5);
 
-    // رسم سلف همانند قبل
-    SDL_RenderDrawLine(renderer, x, y, x + spacing, y);
-    int startx = x + spacing;
+    draw_connector(renderer, x, y);
+    draw_connector(renderer, x + L, y);
+}
+void draw_inductor(SDL_Renderer* renderer, int x, int y, int angle) {
+    const int L = LEN_L();
+    const int radius  = GRID_SIZE / 2;     // 10 (با GRID_SIZE=20)
+    const int spacing = GRID_SIZE / 2;     // 10
+    const int count   = 3;                 // سه نیم‌دایره
+    const int coilsW  = count * 2 * radius;
+    const int leftLead = spacing;
+    const int rightLead = spacing;
 
+    // سرها
+    draw_connector(renderer, x, y);
+    draw_connector(renderer, x + L, y);
+
+    // سیم‌های صاف
+    SDL_RenderDrawLine(renderer, x, y, x + leftLead, y);
+    SDL_RenderDrawLine(renderer, x + leftLead + coilsW, y, x + leftLead + coilsW + rightLead, y);
+
+    // حلقه‌ها
+    int startx = x + leftLead;
     for (int i = 0; i < count; ++i) {
         for (int a = 0; a <= 180; a += 10) {
-            float rad = a * M_PI / 180.0f;
-            int px = startx + i * (radius * 2) + radius + cos(rad) * radius;
-            int py = y + sin(rad) * radius;
+            float rad = a * float(M_PI) / 180.0f;
+            int px = startx + i * (2*radius) + radius + std::cos(rad) * radius;
+            int py = y + std::sin(rad) * radius;
             SDL_RenderDrawPoint(renderer, px, py);
         }
     }
-
-    SDL_RenderDrawLine(renderer, startx + totalWidth, y, startx + totalWidth + spacing, y);
 }
 
 // قبلی را با این عوض کن
@@ -1794,22 +1950,38 @@ void exportToFile(const std::string& path){
             out << "L L" << lCount++ << " " << n1 << " " << n2 << " " << el.value << "\n";
         } else if (el.type == "V") {
             auto it = srcWFByIdx.find((int)idx);
-            if (it != srcWFByIdx.end() && it->second.isSin) {
+            if (it != srcWFByIdx.end()) {
                 const auto &wf = it->second;
-                out << "V V" << vCount++ << " " << n1 << " " << n2
-                    << " " << "SIN(" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                if (wf.isSin) {
+                    out << "V V" << vCount++ << " " << n1 << " " << n2
+                        << " " << "SIN(" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                } else if (wf.isPulse) {
+                    out << "V V" << vCount++ << " " << n1 << " " << n2
+                        << " " << "PULSE " << wf.pulseType << " (" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                } else {
+                    out << "V V" << vCount++ << " " << n1 << " " << n2 << " " << el.value << "\n";
+                }
             } else {
                 out << "V V" << vCount++ << " " << n1 << " " << n2 << " " << el.value << "\n";
             }
+
         } else if (el.type == "I") {
             auto it = srcWFByIdx.find((int)idx);
-            if (it != srcWFByIdx.end() && it->second.isSin) {
+            if (it != srcWFByIdx.end()) {
                 const auto &wf = it->second;
-                out << "I I" << iCount++ << " " << n1 << " " << n2
-                    << " " << "SIN(" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                if (wf.isSin) {
+                    out << "I I" << iCount++ << " " << n1 << " " << n2
+                        << " " << "SIN(" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                } else if (wf.isPulse) {
+                    out << "I I" << iCount++ << " " << n1 << " " << n2
+                        << " " << "PULSE " << wf.pulseType << " (" << wf.off << " " << wf.amp << " " << wf.freq << ")\n";
+                } else {
+                    out << "I I" << iCount++ << " " << n1 << " " << n2 << " " << el.value << "\n";
+                }
             } else {
                 out << "I I" << iCount++ << " " << n1 << " " << n2 << " " << el.value << "\n";
             }
+
         } else if (el.type == "D") {
             out << "D D" << dCount++ << " " << n1 << " " << n2 << " D\n";
         }
@@ -1875,3 +2047,106 @@ static std::string ask_user_for_save_path() {
         SetCurrentDirectoryA(originalDir);
         return path;
     }
+
+
+static void draw_editor_grid(SDL_Renderer* r, int w, int h, int spacing) {
+    // خطوط کم‌رنگ
+    SDL_SetRenderDrawColor(r, 230,230,230,255);
+    for (int x = 0; x <= w; x += spacing) SDL_RenderDrawLine(r, x, 0, x, h);
+    for (int y = 0; y <= h; y += spacing) SDL_RenderDrawLine(r, 0, y, w, y);
+    // هر 5 خط را پررنگ‌تر کن
+    SDL_SetRenderDrawColor(r, 210,210,210,255);
+    for (int x = 0, k=0; x <= w; x += spacing,++k) if (k%5==0) SDL_RenderDrawLine(r, x, 0, x, h);
+    for (int y = 0, k=0; y <= h; y += spacing,++k) if (k%5==0) SDL_RenderDrawLine(r, 0, y, w, y);
+}
+
+
+static bool snapToNearestNode(int x, int y, int& sx, int& sy) {
+    int best = -1, bestd2 = MAGNET_RADIUS*MAGNET_RADIUS;
+    for (int i=0;i<(int)nodes.size();++i) {
+        int dx = nodes[i].x - x, dy = nodes[i].y - y;
+        int d2 = dx*dx + dy*dy;
+        if (d2 <= bestd2) { bestd2 = d2; best = i; }
+    }
+    if (best >= 0) { sx = nodes[best].x; sy = nodes[best].y; return true; }
+    return false;
+}
+
+
+static int pickNodeAt(int mx, int my) {
+    for (int i=0;i<(int)nodes.size();++i) {
+        int dx = nodes[i].x - mx, dy = nodes[i].y - my;
+        if (dx*dx + dy*dy <= NODE_HIT_RADIUS*NODE_HIT_RADIUS) return i;
+    }
+    return -1;
+}
+// نام‌نمایشی: R1, C2, ...
+static std::string elName(size_t idx) {
+    if (idx >= elements.size()) return "?";
+    const Element& el = elements[idx];
+    int count = 0;
+    for (size_t i = 0; i <= idx; ++i)
+        if (elements[i].type == el.type) ++count;
+    return el.type + std::to_string(count);
+}
+
+
+static void cleanupDanglingNodes() {
+    // 1) علامت‌گذاری نودهای استفاده‌شده
+    std::vector<char> used(nodes.size(), 0);
+    for (auto &el : elements) {
+        if (el.node1 >= 0 && el.node1 < (int)used.size()) used[el.node1] = 1;
+        if (el.node2 >= 0 && el.node2 < (int)used.size()) used[el.node2] = 1;
+    }
+    for (int g : ground_node_ids)
+        if (g >= 0 && g < (int)used.size()) used[g] = 1;
+    for (auto &b : labelsB)
+        if (b.nodeId >= 0 && b.nodeId < (int)used.size()) used[b.nodeId] = 1;
+
+    // 2) ساخت مپ قدیم→جدید و کپی نودهای زنده
+    std::vector<int> mapOldToNew(nodes.size(), -1);
+    std::vector<Node> newNodes; newNodes.reserve(nodes.size());
+    for (int i = 0; i < (int)nodes.size(); ++i) if (used[i]) {
+        mapOldToNew[i] = (int)newNodes.size();
+        Node nn = nodes[i]; nn.id = (int)newNodes.size();
+        newNodes.push_back(nn);
+    }
+
+    // 3) ری‌مپ المنت‌ها
+    for (auto &el : elements) {
+        el.node1 = mapOldToNew[el.node1];
+        el.node2 = mapOldToNew[el.node2];
+    }
+
+    // 4) ری‌مپ گراندها (و حذف گراندهای بی‌اعتبار)
+    for (size_t i = 0; i < ground_node_ids.size(); ) {
+        int old = ground_node_ids[i];
+        int neu = (old >= 0 && old < (int)mapOldToNew.size()) ? mapOldToNew[old] : -1;
+        if (neu == -1) ground_node_ids.erase(ground_node_ids.begin()+i);
+        else { ground_node_ids[i] = neu; ++i; }
+    }
+
+    // 5) ری‌مپ/حذف LabelBهای آویزان و تمیز کردن گروه‌ها
+    for (auto &b : labelsB) {
+        int old = b.nodeId;
+        int neu = (old >= 0 && old < (int)mapOldToNew.size()) ? mapOldToNew[old] : -1;
+        b.nodeId = neu;
+    }
+    labelsB.erase(std::remove_if(labelsB.begin(), labelsB.end(),
+                  [](const LabelB& b){ return b.nodeId < 0; }), labelsB.end());
+
+    std::set<int> alive;
+    for (auto &b : labelsB) if (b.nodeId >= 0) alive.insert(b.nodeId);
+    for (auto &g : labelB_groups) {
+        g.erase(std::remove_if(g.begin(), g.end(),
+               [&](int id){ return !alive.count(id); }), g.end());
+    }
+    labelB_groups.erase(std::remove_if(labelB_groups.begin(), labelB_groups.end(),
+               [](const std::vector<int>& g){ return g.size() < 2; }),
+               labelB_groups.end());
+
+    // 6) جاگذاری نودهای جدید و ریست union-find
+    nodes.swap(newNodes);
+    parent.assign(nodes.size(), 0);
+    for (int i = 0; i < (int)nodes.size(); ++i) parent[i] = i;
+}
